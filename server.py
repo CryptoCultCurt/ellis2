@@ -4,16 +4,15 @@ import subprocess
 import sys
 import os
 
-PORT = 8000
+PORT = 8050
 
 class GameHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         if self.path == '/start-game':
             self.send_response(200)
             self.end_headers()
-            # Start the game using the virtual environment's Python
-            venv_python = os.path.join(os.path.dirname(__file__), 'venv', 'bin', 'python3')
-            subprocess.Popen([venv_python, 'battle_royale.py'])
+            # Start the game using the system Python
+            subprocess.Popen([sys.executable, 'battle_royale.py'])
         else:
             self.send_response(404)
             self.end_headers()

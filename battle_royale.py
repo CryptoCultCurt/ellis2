@@ -10,21 +10,43 @@ pygame.mixer.init()
 # Constants
 WINDOW_WIDTH = 800
 WINDOW_HEIGHT = 600
-HUD_HEIGHT = 50  # Height of the HUD area
+MAP_WIDTH = 2400
+MAP_HEIGHT = 1800
+HUD_HEIGHT = 50
+FPS = 60
+
+# Colors
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+RED = (255, 0, 0)
+GREEN = (0, 255, 0)
+BLUE = (0, 0, 255)
+YELLOW = (255, 255, 0)
+GRAY = (128, 128, 128)
+GRASS_GREEN = (34, 139, 34)
+LIGHT_GREEN = (144, 238, 144)
+DARK_GREEN = (0, 100, 0)
+BROWN = (139, 69, 19)
+SAND = (238, 214, 175)
+WATER_BLUE = (65, 105, 225)
+PURPLE = (128, 0, 128)
+GOLD = (255, 215, 0)
+ORANGE = (255, 165, 0)
+
+# Game settings
 PLAYER_SIZE = 20
 BOT_SIZE = 20
 PLAYER_SPEED = 5
 BOT_SPEED = 3
-SAFE_ZONE_SHRINK_RATE = 0.999
-DAMAGE_OUTSIDE_ZONE = 1
+ZONE_DAMAGE = 1
 BULLET_SPEED = 7
 BULLET_SIZE = 5
-BULLET_DAMAGE = 34  # Increased damage (3 hits to kill)
+BULLET_DAMAGE = 34
 SHOOT_COOLDOWN = 500
 SCORE_PER_HIT = 10
-SCORE_PER_KILL = 50  # Added bonus points for kills
-NUM_BOTS = 3  # Reduced number of bots
-BOT_DIRECTION_CHANGE_TIME = 1000  # Time in ms before bot changes direction
+SCORE_PER_KILL = 50
+NUM_BOTS = 10
+BOT_DIRECTION_CHANGE_TIME = 1000
 
 PARTICLE_COLORS = [
     (255, 223, 0),   # Gold
@@ -34,76 +56,54 @@ PARTICLE_COLORS = [
     (255, 255, 255), # White
 ]
 
-# Colors
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-RED = (255, 0, 0)
-GREEN = (0, 255, 0)
-BLUE = (0, 100, 255)  # Player color (lighter blue)
-YELLOW = (255, 255, 0)
-PURPLE = (255, 0, 255)
-CYAN = (0, 255, 255)
-ORANGE = (255, 165, 0)
-PINK = (255, 192, 203)
-LIME = (50, 255, 50)
-TEAL = (0, 128, 128)
-GRAY = (128, 128, 128)  # Added back for HUD
-GOLD = (255, 215, 0)
-
 # List of colors for bots (excluding player color)
 BOT_COLORS = [
     RED,      # Aggressive red
-    PURPLE,   # Royal purple
-    ORANGE,   # Bright orange
-    LIME,     # Neon green
-    CYAN,     # Electric blue
-    PINK,     # Soft pink
-    TEAL,     # Deep teal
+    (255, 0, 255),   # Royal purple
+    (255, 165, 0),   # Bright orange
+    (50, 255, 50),   # Neon green
+    (0, 255, 255),   # Electric blue
+    (255, 192, 203), # Soft pink
+    (0, 128, 128),   # Deep teal
     (255, 128, 0),    # Dark orange
     (128, 0, 255)     # Deep purple
 ]
 
 class Bullet:
-    def __init__(self, start_x, start_y, target_x, target_y, is_enemy, color=WHITE, speed=10, size=3, damage=10):
-        self.x = start_x
-        self.y = start_y
-        self.is_enemy = is_enemy
-        self.color = color
-        self.size = size
+    def __init__(self, x, y, dx, dy, damage, speed, size, owner, is_enemy=False):
+        self.x = x
+        self.y = y
+        self.dx = dx
+        self.dy = dy
         self.damage = damage
-        
-        # Calculate direction
-        dx = target_x - start_x
-        dy = target_y - start_y
-        length = math.sqrt(dx * dx + dy * dy)
-        if length > 0:
-            self.dx = (dx / length) * speed
-            self.dy = (dy / length) * speed
-        else:
-            self.dx = speed
-            self.dy = 0
+        self.speed = speed
+        self.size = size
+        self.owner = owner
+        self.is_enemy = is_enemy
 
     def move(self):
-        self.x += self.dx
-        self.y += self.dy
+        self.x += self.dx * self.speed
+        self.y += self.dy * self.speed
 
     def draw(self):
-        pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), self.size)
+        pygame.draw.circle(screen, WHITE, (int(self.x), int(self.y)), self.size)
 
     def is_off_screen(self):
-        return (self.x < 0 or self.x > WINDOW_WIDTH or 
-                self.y < HUD_HEIGHT or self.y > WINDOW_HEIGHT)
+        return (self.x < 0 or self.x > MAP_WIDTH or 
+                self.y < HUD_HEIGHT or self.y > MAP_HEIGHT)
 
 class Player:
     def __init__(self, x, y, color, is_bot=False):
         self.x = x
         self.y = y
         self.color = color
-        self.health = 100
+        self.max_health = 200
+        self.health = self.max_health
         self.alive = True
         self.hit_flash_time = 0
         self.last_shot_time = 0
         self.is_bot = is_bot
+        self.weapon_inventory = None
 
     def can_shoot(self, current_time):
         return current_time - self.last_shot_time >= SHOOT_COOLDOWN
@@ -116,72 +116,213 @@ class Player:
         new_y = self.y + dy
         
         # Keep player within bounds
-        new_x = max(PLAYER_SIZE, min(WINDOW_WIDTH - PLAYER_SIZE, new_x))
-        new_y = max(HUD_HEIGHT + PLAYER_SIZE, min(WINDOW_HEIGHT - PLAYER_SIZE, new_y))
+        new_x = max(0, min(new_x, MAP_WIDTH))
+        new_y = max(HUD_HEIGHT, min(new_y, MAP_HEIGHT))
         
         self.x = new_x
         self.y = new_y
 
     def draw(self):
-        if self.alive:
-            if pygame.time.get_ticks() - self.hit_flash_time < 100:
-                pygame.draw.circle(screen, WHITE, (int(self.x), int(self.y)), PLAYER_SIZE)
-            else:
-                pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), PLAYER_SIZE)
+        if not self.alive:
+            return
+            
+        current_time = pygame.time.get_ticks()
+        draw_color = WHITE if current_time - self.hit_flash_time < 100 else self.color
+        
+        # Draw body (rectangle)
+        body_width = PLAYER_SIZE - 4
+        body_height = PLAYER_SIZE + 4
+        pygame.draw.rect(screen, draw_color, 
+                        (self.x - body_width//2, 
+                         self.y - body_height//2, 
+                         body_width, body_height))
+        
+        # Draw head (circle)
+        head_radius = PLAYER_SIZE//3
+        pygame.draw.circle(screen, draw_color, 
+                          (int(self.x), int(self.y - body_height//2 - head_radius)), 
+                          head_radius)
+        
+        # Draw health bar
+        health_width = 30
+        health_height = 4
+        pygame.draw.rect(screen, RED, 
+                        (self.x - health_width//2, 
+                         self.y - body_height - head_radius*2 - 5,
+                         health_width, health_height))
+        pygame.draw.rect(screen, GREEN, 
+                        (self.x - health_width//2, 
+                         self.y - body_height - head_radius*2 - 5,
+                         health_width * (self.health/self.max_health), health_height))
+
+    def draw_at_pos(self, x, y):
+        if not self.alive:
+            return
+            
+        current_time = pygame.time.get_ticks()
+        draw_color = WHITE if current_time - self.hit_flash_time < 100 else self.color
+        
+        # Draw body (rectangle)
+        body_width = PLAYER_SIZE - 4
+        body_height = PLAYER_SIZE + 4
+        pygame.draw.rect(screen, draw_color, 
+                        (x - body_width//2, 
+                         y - body_height//2, 
+                         body_width, body_height))
+        
+        # Draw head (circle)
+        head_radius = PLAYER_SIZE//3
+        pygame.draw.circle(screen, draw_color, 
+                          (int(x), int(y - body_height//2 - head_radius)), 
+                          head_radius)
+        
+        # Draw health bar
+        health_width = 30
+        health_height = 4
+        pygame.draw.rect(screen, RED, 
+                        (x - health_width//2, 
+                         y - body_height - head_radius*2 - 5,
+                         health_width, health_height))
+        pygame.draw.rect(screen, GREEN, 
+                        (x - health_width//2, 
+                         y - body_height - head_radius*2 - 5,
+                         health_width * (self.health/self.max_health), health_height))
 
     def shoot(self, target_x, target_y, current_time):
         if not self.alive or not self.can_shoot(current_time):
             return None
 
         self.last_shot_time = current_time
-        return Bullet(self.x, self.y, target_x, target_y, False, self.color)
+        return self.weapon_inventory.shoot(self, target_x, target_y, current_time)
 
 class Bot(Player):
     def __init__(self, x, y, color):
         super().__init__(x, y, color, is_bot=True)
-        self.direction_change_time = 0
-        self.dx = random.choice([-1, 1]) * BOT_SPEED
-        self.dy = random.choice([-1, 1]) * BOT_SPEED
-        
-    def normalize_direction(self):
-        length = math.sqrt(self.dx * self.dx + self.dy * self.dy)
-        if length != 0:
-            self.dx /= length
-            self.dy /= length
-    
-    def update_direction(self, current_time):
-        if current_time - self.direction_change_time > BOT_DIRECTION_CHANGE_TIME:
-            # 70% chance to pick a new random direction, 30% chance to move towards safe zone
-            if random.random() < 0.7:
-                self.dx = random.uniform(-1, 1)
-                self.dy = random.uniform(-1, 1)
-                self.normalize_direction()
-            else:
-                # Move towards the center
-                dx = WINDOW_WIDTH//2 - self.x
-                dy = (WINDOW_HEIGHT + HUD_HEIGHT)//2 - self.y
-                length = math.sqrt(dx * dx + dy * dy)
-                if length != 0:
-                    self.dx = dx / length
-                    self.dy = dy / length
-            self.direction_change_time = current_time
-    
-    def move_with_direction(self):
+        self.target_x = x
+        self.target_y = y
+        self.decision_time = 0
+        self.decision_interval = 1000
+        self.max_health = 200
+        self.health = self.max_health
+        self.weapon_inventory = None
+        self.last_shot_time = 0
+
+    def update(self, player, current_time):
         if not self.alive:
             return
-        current_time = pygame.time.get_ticks()
-        self.update_direction(current_time)
-        self.move(self.dx * BOT_SPEED, self.dy * BOT_SPEED)
+
+        # Update decision making
+        if current_time - self.decision_time > self.decision_interval:
+            self.decision_time = current_time
+            # 70% chance to target player, 30% chance to move randomly
+            if random.random() < 0.7 and player.alive:
+                self.target_x = player.x + random.randint(-100, 100)
+                self.target_y = player.y + random.randint(-100, 100)
+            else:
+                self.target_x = random.randint(0, MAP_WIDTH)
+                self.target_y = random.randint(HUD_HEIGHT, MAP_HEIGHT)
+
+        # Move towards target
+        dx = self.target_x - self.x
+        dy = self.target_y - self.y
+        distance = math.sqrt(dx*dx + dy*dy)
+        
+        if distance > 0:
+            dx = dx/distance * BOT_SPEED
+            dy = dy/distance * BOT_SPEED
+            
+            # Update position
+            new_x = self.x + dx
+            new_y = self.y + dy
+            
+            # Keep bot within bounds
+            new_x = max(0, min(new_x, MAP_WIDTH))
+            new_y = max(HUD_HEIGHT, min(new_y, MAP_HEIGHT))
+            
+            self.x = new_x
+            self.y = new_y
 
     def draw(self):
-        if self.alive:
-            # Draw the bot with its unique color
-            if pygame.time.get_ticks() - self.hit_flash_time < 100:
-                pygame.draw.circle(screen, WHITE, (int(self.x), int(self.y)), BOT_SIZE)
-            else:
-                pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), BOT_SIZE)
-                # Add a small white dot in the center for better visibility
-                pygame.draw.circle(screen, WHITE, (int(self.x), int(self.y)), BOT_SIZE//4)
+        if not self.alive:
+            return
+            
+        # Draw body (rectangle)
+        body_width = 30
+        body_height = 40
+        pygame.draw.rect(screen, self.color, 
+                        (self.x - body_width//2,
+                         self.y - body_height//2,
+                         body_width, body_height))
+        
+        # Draw head (circle)
+        head_radius = 10
+        pygame.draw.circle(screen, self.color,
+                         (int(self.x), int(self.y - body_height//2 - head_radius)),
+                         head_radius)
+        
+        # Draw health bar
+        health_width = 40
+        health_height = 5
+        # Draw background (red)
+        pygame.draw.rect(screen, RED, 
+                        (self.x - health_width//2, 
+                         self.y - body_height - head_radius*2 - 5,
+                         health_width, health_height))
+        # Draw current health (green)
+        pygame.draw.rect(screen, GREEN, 
+                        (self.x - health_width//2, 
+                         self.y - body_height - head_radius*2 - 5,
+                         health_width * (self.health/self.max_health), health_height))
+
+    def draw_at_pos(self, x, y):
+        if not self.alive:
+            return
+            
+        # Draw body (rectangle)
+        body_width = 30
+        body_height = 40
+        pygame.draw.rect(screen, self.color, 
+                        (x - body_width//2,
+                         y - body_height//2,
+                         body_width, body_height))
+        
+        # Draw head (circle)
+        head_radius = 10
+        pygame.draw.circle(screen, self.color,
+                         (int(x), int(y - body_height//2 - head_radius)),
+                         head_radius)
+        
+        # Draw health bar
+        health_width = 40
+        health_height = 5
+        # Draw background (red)
+        pygame.draw.rect(screen, RED, 
+                        (x - health_width//2, 
+                         y - body_height - head_radius*2 - 5,
+                         health_width, health_height))
+        # Draw current health (green)
+        pygame.draw.rect(screen, GREEN, 
+                        (x - health_width//2, 
+                         y - body_height - head_radius*2 - 5,
+                         health_width * (self.health/self.max_health), health_height))
+
+class TerrainPatch:
+    def __init__(self, x, y, size, type):
+        self.x = x
+        self.y = y
+        self.size = size
+        self.type = type  # 'grass', 'tree', 'rock', 'water', 'sand'
+        
+        if self.type == 'tree':
+            self.color = DARK_GREEN
+        elif self.type == 'rock':
+            self.color = GRAY
+        elif self.type == 'water':
+            self.color = WATER_BLUE
+        elif self.type == 'sand':
+            self.color = SAND
+        else:  # grass
+            self.color = LIGHT_GREEN
 
 class Particle:
     def __init__(self, x, y):
@@ -209,11 +350,32 @@ class Particle:
         pygame.draw.circle(surf, color, (self.size, self.size), self.size)
         screen.blit(surf, (int(self.x - self.size), int(self.y - self.size)))
 
+class DamageNumber:
+    def __init__(self, x, y, damage):
+        self.x = x
+        self.y = y
+        self.damage = damage
+        self.lifetime = 30  # Number of frames the damage number will be visible
+        self.y_offset = 0
+        self.alpha = 255
+        self.font = pygame.font.Font(None, 36)
+    
+    def update(self):
+        self.lifetime -= 1
+        self.y_offset -= 1  # Move up
+        self.alpha = int((self.lifetime / 30) * 255)  # Fade out
+        return self.lifetime > 0
+    
+    def draw(self, screen):
+        text = self.font.render(str(int(self.damage)), True, (255, 255, 0))
+        text.set_alpha(self.alpha)
+        screen.blit(text, (self.x - text.get_width()//2, self.y + self.y_offset - 20))
+
 class Weapon:
     def __init__(self, name, damage, fire_rate, bullet_speed, bullet_size, bullet_color, sound_freq):
         self.name = name
         self.damage = damage
-        self.fire_rate = fire_rate  # milliseconds between shots
+        self.fire_rate = fire_rate
         self.bullet_speed = bullet_speed
         self.bullet_size = bullet_size
         self.bullet_color = bullet_color
@@ -230,17 +392,103 @@ class Weapon:
 class WeaponInventory:
     def __init__(self):
         self.weapons = {
-            'Pistol': Weapon('Pistol', damage=10, fire_rate=500, bullet_speed=10, 
-                           bullet_size=3, bullet_color=YELLOW, sound_freq=440),
-            'Shotgun': Weapon('Shotgun', damage=15, fire_rate=1000, bullet_speed=8, 
-                            bullet_size=4, bullet_color=RED, sound_freq=220),
-            'Sniper': Weapon('Sniper', damage=50, fire_rate=2000, bullet_speed=15, 
-                           bullet_size=2, bullet_color=BLUE, sound_freq=880),
-            'MachineGun': Weapon('MachineGun', damage=5, fire_rate=100, bullet_speed=12, 
-                                bullet_size=2, bullet_color=GREEN, sound_freq=660)
+            'Pistol': Weapon('Pistol', 
+                           damage=15, 
+                           fire_rate=400,  
+                           bullet_speed=12, 
+                           bullet_size=3,
+                           bullet_color=YELLOW,
+                           sound_freq=440),
+                           
+            'Shotgun': Weapon('Shotgun', 
+                            damage=8,  
+                            fire_rate=800,  
+                            bullet_speed=8,  
+                            bullet_size=4,
+                            bullet_color=RED,
+                            sound_freq=220),
+                            
+            'Sniper': Weapon('Sniper', 
+                           damage=75,  
+                           fire_rate=1500,  
+                           bullet_speed=20,  
+                           bullet_size=2,  
+                           bullet_color=BLUE,
+                           sound_freq=880),
+                           
+            'AssaultRifle': Weapon('AssaultRifle', 
+                                 damage=20,
+                                 fire_rate=200,  
+                                 bullet_speed=15,
+                                 bullet_size=3,
+                                 bullet_color=GREEN,
+                                 sound_freq=660),
+                                 
+            'SMG': Weapon('SMG', 
+                         damage=12,  
+                         fire_rate=100,  
+                         bullet_speed=14,
+                         bullet_size=2,
+                         bullet_color=PURPLE,
+                         sound_freq=550),
+                         
+            'Revolver': Weapon('Revolver', 
+                             damage=40,  
+                             fire_rate=600,  
+                             bullet_speed=13,
+                             bullet_size=4,
+                             bullet_color=ORANGE,
+                             sound_freq=330),
         }
-        self.current_weapon = self.weapons['Pistol']
-    
+        self.current_weapon = self.weapons[random.choice(list(self.weapons.keys()))]
+
+    def shoot(self, shooter, target_x, target_y, current_time):
+        if not shooter.alive or not self.current_weapon:
+            return []
+
+        weapon = self.current_weapon
+        if current_time - shooter.last_shot_time < weapon.fire_rate:
+            return []
+
+        shooter.last_shot_time = current_time
+        bullets = []
+
+        dx = target_x - shooter.x
+        dy = target_y - shooter.y
+        length = math.sqrt(dx*dx + dy*dy)
+        if length > 0:
+            dx = dx/length
+            dy = dy/length
+
+        if weapon.name == "Shotgun":
+            num_pellets = 5
+            spread_angle = math.pi / 8  
+            for i in range(num_pellets):
+                angle = math.atan2(dy, dx) + random.uniform(-spread_angle, spread_angle)
+                pellet_dx = math.cos(angle)
+                pellet_dy = math.sin(angle)
+                bullets.append(Bullet(
+                    shooter.x, shooter.y,
+                    pellet_dx, pellet_dy,
+                    weapon.damage // num_pellets,  
+                    weapon.bullet_speed,
+                    weapon.bullet_size,
+                    shooter,
+                    isinstance(shooter, Bot)
+                ))
+        else:
+            bullets.append(Bullet(
+                shooter.x, shooter.y,
+                dx, dy,
+                weapon.damage,
+                weapon.bullet_speed,
+                weapon.bullet_size,
+                shooter,
+                isinstance(shooter, Bot)
+            ))
+
+        return bullets
+
     def switch_weapon(self, weapon_name):
         if weapon_name in self.weapons:
             self.current_weapon = self.weapons[weapon_name]
@@ -259,197 +507,311 @@ class WeaponInventory:
         prev_index = (current_index - 1) % len(weapons_list)
         self.current_weapon = self.weapons[weapons_list[prev_index]]
 
+class Camera:
+    def __init__(self):
+        self.x = 0
+        self.y = 0
+        self.zoom = 0.5  
+    
+    def update(self, target_x, target_y):
+        visible_width = WINDOW_WIDTH / self.zoom
+        visible_height = (WINDOW_HEIGHT - HUD_HEIGHT) / self.zoom
+        
+        self.x = target_x - visible_width // 2
+        self.y = target_y - visible_height // 2
+        
+        self.x = max(0, min(self.x, MAP_WIDTH - visible_width))
+        self.y = max(0, min(self.y, MAP_HEIGHT - visible_height))
+    
+    def apply(self, x, y):
+        screen_x = (x - self.x) * self.zoom
+        screen_y = (y - self.y) * self.zoom
+        return screen_x, screen_y
+
+    def apply_radius(self, radius):
+        return radius * self.zoom
+
 class Game:
     def __init__(self):
-        self.reset_game()
+        pygame.init()
+        pygame.mixer.init()
+        self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+        pygame.display.set_caption("Battle Royale")
         self.font = pygame.font.Font(None, 36)
-        self.large_font = pygame.font.Font(None, 74)
-        self.title_font = pygame.font.Font(None, 100)
-        self.countdown_font = pygame.font.Font(None, 200)  # Large font for countdown
-        self.game_over = False
-        self.victory = False
+        self.small_font = pygame.font.Font(None, 24)
+        self.camera = Camera()
         self.game_started = False
-        self.countdown_start = 0
         self.in_countdown = False
+        self.in_weapon_select = False
+        self.selected_weapon_index = 0
+        self.game_over = False
+        self.reset_game()
+
+    def reset_game(self):
+        self.player = Player(MAP_WIDTH//2, MAP_HEIGHT//2, BLUE)
+        self.bots = []
+        self.bullets = []
         self.particles = []
-        self.victory_start_time = 0
+        self.damage_numbers = []
+        self.safe_zone_radius = min(MAP_WIDTH, MAP_HEIGHT) // 2
+        self.safe_zone_center = (MAP_WIDTH//2, MAP_HEIGHT//2)
+        self.score = 0
+        self.storm_start_time = pygame.time.get_ticks()
+        self.storm_started = False
+        self.create_bots()
+
+        self.player.weapon_inventory = WeaponInventory()
+        self.terrain_patches = []
         
-        # Initialize sound effects as None first
-        self.shoot_sound = None
-        self.hit_sound = None
-        self.death_sound = None
-        self.victory_sound = None
-        self.game_over_sound = None
-        self.victory_music = None
-        self.countdown_sound = None
+        # Add water bodies
+        for _ in range(3):
+            x = random.randint(0, MAP_WIDTH)
+            y = random.randint(HUD_HEIGHT, MAP_HEIGHT)
+            size = random.randint(100, 200)
+            self.terrain_patches.append(TerrainPatch(x, y, size, 'water'))
+            
+            # Add sand around water
+            for i in range(8):
+                angle = i * (math.pi/4)
+                sand_x = x + math.cos(angle) * (size + 20)
+                sand_y = y + math.sin(angle) * (size + 20)
+                self.terrain_patches.append(TerrainPatch(sand_x, sand_y, 40, 'sand'))
         
-        # Try to load sound effects
-        try:
-            import os
-            sound_dir = os.path.join(os.path.dirname(__file__), 'sounds')
-            
-            if os.path.exists(os.path.join(sound_dir, 'shoot.wav')):
-                self.shoot_sound = pygame.mixer.Sound(os.path.join(sound_dir, 'shoot.wav'))
-                self.shoot_sound.set_volume(0.3)
-            
-            if os.path.exists(os.path.join(sound_dir, 'hit.wav')):
-                self.hit_sound = pygame.mixer.Sound(os.path.join(sound_dir, 'hit.wav'))
-                self.hit_sound.set_volume(0.4)
-            
-            if os.path.exists(os.path.join(sound_dir, 'death.wav')):
-                self.death_sound = pygame.mixer.Sound(os.path.join(sound_dir, 'death.wav'))
-                self.death_sound.set_volume(0.5)
-            
-            if os.path.exists(os.path.join(sound_dir, 'victory_music.wav')):
-                self.victory_music = pygame.mixer.Sound(os.path.join(sound_dir, 'victory_music.wav'))
-                self.victory_music.set_volume(0.6)
-            
-            if os.path.exists(os.path.join(sound_dir, 'game_over.wav')):
-                self.game_over_sound = pygame.mixer.Sound(os.path.join(sound_dir, 'game_over.wav'))
-                self.game_over_sound.set_volume(0.6)
+        # Add trees
+        for _ in range(50):
+            x = random.randint(0, MAP_WIDTH)
+            y = random.randint(HUD_HEIGHT, MAP_HEIGHT)
+            size = random.randint(30, 50)
+            self.terrain_patches.append(TerrainPatch(x, y, size, 'tree'))
+        
+        # Add rocks
+        for _ in range(30):
+            x = random.randint(0, MAP_WIDTH)
+            y = random.randint(HUD_HEIGHT, MAP_HEIGHT)
+            size = random.randint(20, 35)
+            self.terrain_patches.append(TerrainPatch(x, y, size, 'rock'))
+        
+        # Add grass patches
+        for _ in range(200):
+            x = random.randint(0, MAP_WIDTH)
+            y = random.randint(HUD_HEIGHT, MAP_HEIGHT)
+            size = random.randint(20, 40)
+            self.terrain_patches.append(TerrainPatch(x, y, size, 'grass'))
 
-            if os.path.exists(os.path.join(sound_dir, 'countdown_beep.wav')):
-                self.countdown_sound = pygame.mixer.Sound(os.path.join(sound_dir, 'countdown_beep.wav'))
-                self.countdown_sound.set_volume(0.4)
-        except Exception as e:
-            print(f"Warning: Could not load sound effects: {e}")
+    def create_bots(self):
+        self.bots = []
+        bot_weapons = ['Pistol', 'SMG', 'Shotgun', 'Sniper']
+        
+        for _ in range(NUM_BOTS):
+            while True:
+                x = random.randint(0, MAP_WIDTH)
+                y = random.randint(HUD_HEIGHT, MAP_HEIGHT)
+                distance_to_player = math.sqrt((x - self.player.x)**2 + (y - self.player.y)**2)
+                if distance_to_player > 200:
+                    bot = Bot(x, y, random.choice(BOT_COLORS))
+                    bot.weapon_inventory = WeaponInventory()
+                    chosen_weapon = random.choice(bot_weapons)
+                    bot.weapon_inventory.switch_weapon(chosen_weapon)
+                    self.bots.append(bot)
+                    break
 
-    def play_sound(self, sound):
-        if sound is not None:
-            try:
-                sound.play()
-            except Exception as e:
-                print(f"Warning: Could not play sound effect: {e}")
-
-    def create_particles(self, x, y, count=20):
-        for _ in range(count):
-            self.particles.append(Particle(x, y))
+    def handle_input(self):
+        keys = pygame.key.get_pressed()
+        dx = 0
+        dy = 0
+        if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+            dx = -PLAYER_SPEED
+        if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+            dx = PLAYER_SPEED
+        if keys[pygame.K_w] or keys[pygame.K_UP]:
+            dy = -PLAYER_SPEED
+        if keys[pygame.K_s] or keys[pygame.K_DOWN]:
+            dy = PLAYER_SPEED
+        
+        # Only move if a movement key is pressed
+        if dx != 0 or dy != 0:
+            # Normalize diagonal movement
+            if dx != 0 and dy != 0:
+                dx *= 0.707  # 1/sqrt(2)
+                dy *= 0.707
+            
+            # Update position
+            new_x = self.player.x + dx
+            new_y = self.player.y + dy
+            
+            # Keep player within bounds
+            self.player.x = max(0, min(new_x, MAP_WIDTH))
+            self.player.y = max(HUD_HEIGHT, min(new_y, MAP_HEIGHT))
+        
+        # Update camera to follow player
+        self.camera.update(self.player.x, self.player.y)
 
     def update_particles(self):
         self.particles = [p for p in self.particles if p.update()]
 
-    def reset_game(self):
-        self.player = Player(WINDOW_WIDTH//2, WINDOW_HEIGHT//2 + HUD_HEIGHT, BLUE)
-        self.bots = []
-        self.bullets = []
-        self.particles = []
-        self.safe_zone_radius = min(WINDOW_WIDTH, WINDOW_HEIGHT - HUD_HEIGHT) // 2
-        self.safe_zone_center = (WINDOW_WIDTH//2, (WINDOW_HEIGHT + HUD_HEIGHT)//2)
-        self.score = 0
-        self.game_over = False
-        self.victory = False
-        self.victory_start_time = 0
-        self.game_started = False
-        self.in_countdown = False
-        self.weapon_inventory = WeaponInventory()
-        self.create_bots()
-
-    def create_bots(self):
-        for i in range(NUM_BOTS):
-            # Pick a unique color for each bot
-            bot_color = BOT_COLORS[i % len(BOT_COLORS)]
-            
-            # Spawn bots around the edges
-            if i == 0:  # Top edge
-                x = random.randint(0, WINDOW_WIDTH)
-                y = HUD_HEIGHT + BOT_SIZE
-            elif i == 1:  # Right edge
-                x = WINDOW_WIDTH - BOT_SIZE
-                y = random.randint(HUD_HEIGHT, WINDOW_HEIGHT)
-            else:  # Left edge
-                x = BOT_SIZE
-                y = random.randint(HUD_HEIGHT, WINDOW_HEIGHT)
-            
-            self.bots.append(Bot(x, y, bot_color))
-
-    def move_bots(self):
-        for bot in self.bots:
-            if not bot.alive:
-                continue
-            bot.move_with_direction()
-            
-            # Bot shooting
-            current_time = pygame.time.get_ticks()
-            if bot.can_shoot(current_time) and random.random() < 0.02:
-                if self.player.alive:
-                    # Shoot at player with some randomness
-                    target_x = self.player.x + random.uniform(-50, 50)
-                    target_y = self.player.y + random.uniform(-50, 50)
-                    bullet = bot.shoot(target_x, target_y, current_time)
-                    if bullet:
-                        self.bullets.append(bullet)
-
     def update_bullets(self):
-        # Move bullets and check for collisions
         for bullet in self.bullets[:]:
             bullet.move()
             
-            # Check collision with player
-            if self.player.alive:
+            if bullet.is_off_screen():
+                if bullet in self.bullets:
+                    self.bullets.remove(bullet)
+                continue
+            
+            if self.player.alive and bullet.owner != self.player:
                 dx = bullet.x - self.player.x
                 dy = bullet.y - self.player.y
                 distance = math.sqrt(dx**2 + dy**2)
-                if distance < PLAYER_SIZE + bullet.size and bullet.is_enemy:
+                if distance < PLAYER_SIZE:
                     self.player.health -= bullet.damage
-                    self.player.hit_flash_time = pygame.time.get_ticks()
-                    self.play_sound(self.hit_sound)
-                    print(f"Player hit! Health: {self.player.health}")
+                    if bullet in self.bullets:
+                        self.bullets.remove(bullet)
                     if self.player.health <= 0:
                         self.player.alive = False
-                        self.play_sound(self.death_sound)
-                        print("Player eliminated!")
-                    self.bullets.remove(bullet)
+                        self.player.health = 0
                     continue
-
-            # Check collision with bots
+            
             for bot in self.bots:
-                if bot.alive:
+                if bot.alive and bullet.owner != bot:
                     dx = bullet.x - bot.x
                     dy = bullet.y - bot.y
                     distance = math.sqrt(dx**2 + dy**2)
-                    if distance < BOT_SIZE + bullet.size and not bullet.is_enemy:
+                    if distance < BOT_SIZE:
                         bot.health -= bullet.damage
-                        bot.hit_flash_time = pygame.time.get_ticks()
-                        self.play_sound(self.hit_sound)
-                        print(f"Bot hit! Health: {bot.health}")
-                        self.score += SCORE_PER_HIT
+                        if bullet in self.bullets:
+                            self.bullets.remove(bullet)
+                        if bullet.owner == self.player:
+                            self.damage_numbers.append(DamageNumber(bot.x, bot.y - 20, bullet.damage))
                         if bot.health <= 0:
                             bot.alive = False
-                            self.score += SCORE_PER_KILL
-                            self.play_sound(self.death_sound)
-                            print("Bot eliminated!")
-                        self.bullets.remove(bullet)
+                            bot.health = 0
                         break
 
-            # Remove bullets that are out of bounds
-            if bullet in self.bullets and bullet.is_off_screen():
-                self.bullets.remove(bullet)
-
     def update_safe_zone(self):
-        self.safe_zone_radius *= SAFE_ZONE_SHRINK_RATE
-        if self.safe_zone_radius < 50:
-            self.safe_zone_radius = 50
+        current_time = pygame.time.get_ticks()
+        
+        if not self.storm_started and self.game_started and current_time - self.storm_start_time >= 20000:
+            self.storm_started = True
+        
+        if self.storm_started:
+            self.safe_zone_radius = max(100, self.safe_zone_radius - 0.1)  
 
     def check_zone_damage(self):
-        # Check player
-        if self.player.alive:
-            distance = math.sqrt((self.player.x - self.safe_zone_center[0])**2 + 
-                               (self.player.y - self.safe_zone_center[1])**2)
-            if distance > self.safe_zone_radius:
-                self.player.health -= DAMAGE_OUTSIDE_ZONE
-                if self.player.health <= 0:
-                    self.player.alive = False
+        if not self.storm_started:
+            return  
+        
+        distance_to_center = math.sqrt((self.player.x - self.safe_zone_center[0])**2 + 
+                                     (self.player.y - self.safe_zone_center[1])**2)
+        if distance_to_center > self.safe_zone_radius and self.player.alive:
+            self.player.health -= ZONE_DAMAGE
+            if self.player.health <= 0:
+                self.player.alive = False
+                self.player.health = 0
+        
+        for bot in self.bots:
+            if bot.alive:
+                distance_to_center = math.sqrt((bot.x - self.safe_zone_center[0])**2 + 
+                                             (bot.y - self.safe_zone_center[1])**2)
+                if distance_to_center > self.safe_zone_radius:
+                    bot.health -= ZONE_DAMAGE
+                    if bot.health <= 0:
+                        bot.alive = False
+                        bot.health = 0
 
-        # Check bots
+    def move_bots(self):
+        current_time = pygame.time.get_ticks()
         for bot in self.bots:
             if not bot.alive:
                 continue
-            distance = math.sqrt((bot.x - self.safe_zone_center[0])**2 + 
-                               (bot.y - self.safe_zone_center[1])**2)
-            if distance > self.safe_zone_radius:
-                bot.health -= DAMAGE_OUTSIDE_ZONE
-                if bot.health <= 0:
-                    bot.alive = False
+
+            closest_target = None
+            closest_distance = float('inf')
+            
+            if self.player.alive:
+                dx = self.player.x - bot.x
+                dy = self.player.y - bot.y
+                player_distance = math.sqrt(dx*dx + dy*dy)
+                if player_distance < closest_distance:
+                    closest_distance = player_distance
+                    closest_target = self.player
+            
+            for other_bot in self.bots:
+                if other_bot != bot and other_bot.alive:
+                    dx = other_bot.x - bot.x
+                    dy = other_bot.y - bot.y
+                    bot_distance = math.sqrt(dx*dx + dy*dy)
+                    if bot_distance < closest_distance:
+                        closest_distance = bot_distance
+                        closest_target = other_bot
+            
+            if closest_target and closest_distance > 50:  
+                dx = closest_target.x - bot.x
+                dy = closest_target.y - bot.y
+                distance = math.sqrt(dx*dx + dy*dy)
+                if distance > 0:
+                    dx = dx/distance * BOT_SPEED
+                    dy = dy/distance * BOT_SPEED
+                    
+                    new_x = bot.x + dx
+                    new_y = bot.y + dy
+                    
+                    can_move = True
+                    for other_bot in self.bots:
+                        if other_bot != bot and other_bot.alive:
+                            dist = math.sqrt((new_x - other_bot.x)**2 + (new_y - other_bot.y)**2)
+                            if dist < 40:  
+                                can_move = False
+                                break
+                    
+                    if self.player.alive:
+                        dist = math.sqrt((new_x - self.player.x)**2 + (new_y - self.player.y)**2)
+                        if dist < 40:
+                            can_move = False
+                    
+                    if can_move:
+                        new_x = max(0, min(new_x, MAP_WIDTH))
+                        new_y = max(HUD_HEIGHT, min(new_y, MAP_HEIGHT))
+                        bot.x = new_x
+                        bot.y = new_y
+            
+            if closest_target and closest_distance < 300:  
+                target_x = closest_target.x + random.uniform(-20, 20)
+                target_y = closest_target.y + random.uniform(-20, 20)
+                bullets = self.shoot(bot, target_x, target_y, current_time)
+                if bullets:
+                    self.bullets.extend(bullets)
+
+    def handle_bullet_collision(self, bullet):
+        if self.player.alive and bullet.owner != self.player:
+            dx = self.player.x - bullet.x
+            dy = self.player.y - bullet.y
+            distance = math.sqrt(dx*dx + dy*dy)
+            if distance < PLAYER_SIZE:
+                damage = bullet.damage
+                self.player.health -= damage
+                if self.player.health <= 0:
+                    self.player.alive = False
+                    self.player.health = 0
+                return True
+
+        for bot in self.bots:
+            if bot.alive and bullet.owner != bot:
+                dx = bot.x - bullet.x
+                dy = bot.y - bullet.y
+                distance = math.sqrt(dx*dx + dy*dy)
+                if distance < BOT_SIZE:
+                    damage = bullet.damage
+                    bot.health -= damage
+                    if bullet.owner == self.player:
+                        damage_number = DamageNumber(bot.x, bot.y, damage)
+                        self.damage_numbers.append(damage_number)
+                    if bot.health <= 0:
+                        bot.alive = False
+                        bot.health = 0
+                        if bullet.owner == self.player:
+                            self.score += 1
+                    return True
+        return False
 
     def draw_hud(self):
         # Draw HUD background
@@ -466,342 +828,496 @@ class Game:
         
         # Draw player health with color indicator
         if self.player.alive:
-            health_text = self.font.render(f'Health: {int(self.player.health)}', True, BLUE)  # Match player color
-            screen.blit(health_text, (WINDOW_WIDTH // 2 - 50, 10))
-
+            health_width = 200
+            health_height = 20
+            health_x = WINDOW_WIDTH//2 - health_width//2
+            health_y = 10
+            
+            # Draw health bar background
+            pygame.draw.rect(screen, RED, (health_x, health_y, health_width, health_height))
+            # Draw current health
+            pygame.draw.rect(screen, GREEN, 
+                           (health_x, health_y, 
+                            health_width * (self.player.health/self.player.max_health), 
+                            health_height))
+            
+            # Draw health text
+            health_text = self.font.render(f'Health: {int(self.player.health)}', True, WHITE)
+            screen.blit(health_text, (health_x + health_width//2 - health_text.get_width()//2, 
+                                    health_y + health_height + 5))
+        
         # Draw current weapon
-        weapon_text = self.font.render(f'Weapon: {self.weapon_inventory.current_weapon.name}', True, WHITE)
-        screen.blit(weapon_text, (10, 40))
+        if self.player.weapon_inventory.current_weapon:
+            weapon_text = self.font.render(f'Weapon: {self.player.weapon_inventory.current_weapon.name}', 
+                                         True, WHITE)
+            screen.blit(weapon_text, (10, HUD_HEIGHT - 30))
 
     def draw_game_over_screen(self):
         screen.fill(BLACK)
-        
-        # Draw game over text
-        if self.victory:
-            text = self.title_font.render("VICTORY!", True, GREEN)
+        if self.player.alive:
+            text = self.font.render("Victory Royale!", True, GOLD)
         else:
-            text = self.title_font.render("GAME OVER", True, RED)
-        text_rect = text.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//3))
+            text = self.font.render("Game Over", True, RED)
+        
+        text_rect = text.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//2 - 50))
         screen.blit(text, text_rect)
         
-        # Draw score
-        score_text = self.font.render(f"Final Score: {self.score}", True, WHITE)
-        score_rect = score_text.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//2))
+        score_text = self.font.render(f"Score: {self.score}", True, WHITE)
+        score_rect = score_text.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//2 + 20))
         screen.blit(score_text, score_rect)
         
-        # Draw play again button
-        button_width = 200
-        button_height = 50
-        button_x = WINDOW_WIDTH//2 - button_width//2
-        button_y = WINDOW_HEIGHT * 2//3
-        
-        mouse_pos = pygame.mouse.get_pos()
-        mouse_over_button = (button_x <= mouse_pos[0] <= button_x + button_width and 
-                           button_y <= mouse_pos[1] <= button_y + button_height)
-        
-        print(f"Game Over Screen - Button: x={button_x}, y={button_y}, w={button_width}, h={button_height}")
-        print(f"Mouse: x={mouse_pos[0]}, y={mouse_pos[1]}")
-        print(f"Mouse over button: {mouse_over_button}")
-        
-        button_color = (100, 100, 255) if mouse_over_button else (70, 70, 200)
-        
-        pygame.draw.rect(screen, button_color, (button_x, button_y, button_width, button_height))
-        pygame.draw.rect(screen, WHITE, (button_x, button_y, button_width, button_height), 2)
-        
-        play_again_text = self.font.render("Play Again", True, WHITE)
-        text_rect = play_again_text.get_rect(center=(WINDOW_WIDTH//2, button_y + button_height//2))
-        screen.blit(play_again_text, text_rect)
-        
-        pygame.display.flip()
-        
-        # Return button rectangle for click detection
-        return (button_x, button_y, button_width, button_height)
+        restart_text = self.font.render("Click anywhere to restart", True, WHITE)
+        restart_rect = restart_text.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//2 + 90))
+        screen.blit(restart_text, restart_rect)
 
     def draw_start_screen(self):
         screen.fill(BLACK)
+        title_text = self.font.render("Battle Royale", True, WHITE)
+        start_text = self.font.render("Click to Start", True, WHITE)
         
-        # Draw title
-        title = self.title_font.render("BATTLE ROYALE", True, BLUE)
-        title_rect = title.get_rect(center=(WINDOW_WIDTH//2, 100))
-        screen.blit(title, title_rect)
+        title_rect = title_text.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//2 - 50))
+        start_rect = start_text.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//2 + 50))
+        
+        screen.blit(title_text, title_rect)
+        
+        # Draw start button
+        button_rect = pygame.Rect(WINDOW_WIDTH//2 - 100, WINDOW_HEIGHT//2 - 25, 200, 50)
+        pygame.draw.rect(screen, BLUE, button_rect)
+        screen.blit(start_text, start_rect)
         
         # Draw instructions
         instructions = [
             "Controls:",
-            "Arrow Keys - Move",
-            "Spacebar - Shoot",
-            "",
-            "Objective:",
-            "Eliminate all bots",
-            "Stay in the safe zone",
-            "Score points with hits and kills",
-            "",
-            "Press ENTER or click Start to begin"
+            "WASD/Arrow Keys - Move",
+            "Space - Shoot",
+            "R - Switch Weapon"
         ]
         
-        y_pos = 200
+        y_pos = WINDOW_HEIGHT - 150
         for line in instructions:
-            text = self.font.render(line, True, WHITE)
+            text = self.small_font.render(line, True, WHITE)
             text_rect = text.get_rect(center=(WINDOW_WIDTH//2, y_pos))
             screen.blit(text, text_rect)
-            y_pos += 35
+            y_pos += 25
         
-        # Draw start button
-        button_width = 200
-        button_height = 50
-        button_x = WINDOW_WIDTH//2 - button_width//2
-        button_y = WINDOW_HEIGHT - 100
-        
-        mouse_pos = pygame.mouse.get_pos()
-        mouse_over_button = (button_x <= mouse_pos[0] <= button_x + button_width and 
-                           button_y <= mouse_pos[1] <= button_y + button_height)
-        
-        # Debug output for button position and mouse
-      #  print(f"Button: x={button_x}, y={button_y}, w={button_width}, h={button_height}")
-     #   print(f"Mouse: x={mouse_pos[0]}, y={mouse_pos[1]}")
-      #  print(f"Mouse over button: {mouse_over_button}")
-        
-        button_color = (100, 100, 255) if mouse_over_button else (70, 70, 200)
-        
-        pygame.draw.rect(screen, button_color, (button_x, button_y, button_width, button_height))
-        pygame.draw.rect(screen, WHITE, (button_x, button_y, button_width, button_height), 2)
-        
-        start_text = self.font.render("Start Game", True, WHITE)
-        text_rect = start_text.get_rect(center=(WINDOW_WIDTH//2, button_y + button_height//2))
-        screen.blit(start_text, text_rect)
-        
-        pygame.display.flip()
-        
-        # Return button rectangle for click detection
-        return (button_x, button_y, button_width, button_height)
-
-    def draw(self):
-        if self.game_started:
-            if self.game_over:
-                return self.draw_game_over_screen()  # Return button rect for game over screen
-            else:
-                # Draw game screen
-                screen.fill(BLACK)
-                
-                # Draw game elements
-                self.draw_hud()
-                pygame.draw.line(screen, WHITE, (0, HUD_HEIGHT), (WINDOW_WIDTH, HUD_HEIGHT))
-                pygame.draw.circle(screen, YELLOW, self.safe_zone_center, int(self.safe_zone_radius), 2)
-                
-                # Draw players and bullets
-                if self.player.alive:
-                    self.player.draw()
-                for bot in self.bots:
-                    if bot.alive:
-                        bot.draw()
-                for bullet in self.bullets:
-                    bullet.draw()
-                
-                pygame.display.flip()
-                return None  # No button rect needed
-        elif self.in_countdown:
-            self.draw_countdown()
-            return None  # No button rect needed
-        else:
-            return self.draw_start_screen()  # Returns button rect
+        return button_rect
 
     def draw_countdown(self):
         screen.fill(BLACK)
-        current_time = pygame.time.get_ticks()
-        time_elapsed = (current_time - self.countdown_start) / 1000  # Convert to seconds
-        countdown_value = 4 - int(time_elapsed)  # Start from 3
+        time_elapsed = (pygame.time.get_ticks() - self.countdown_start) / 1000
+        count = 4 - int(time_elapsed)
+        if count > 0:
+            count_text = self.font.render(str(count), True, WHITE)
+            text_rect = count_text.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//2))
+            screen.blit(count_text, text_rect)
+
+    def draw_weapon_select_screen(self):
+        screen.fill((20, 20, 40))  # Dark blue background
         
-        print(f"Countdown - Time elapsed: {time_elapsed:.1f}s, Value: {countdown_value}")
+        # Draw title
+        title = self.font.render("Select Your Weapon", True, WHITE)
+        title_rect = title.get_rect(center=(WINDOW_WIDTH//2, 50))
+        screen.blit(title, title_rect)
         
-        if countdown_value <= 0:
-            print("Countdown finished - Starting game!")
-            self.in_countdown = False
-            self.game_started = True
-            return
+        # Get list of weapons
+        weapons = list(self.player.weapon_inventory.weapons.values())
         
-        # Play beep sound at the start of each number
-        if countdown_value < 4 and abs(time_elapsed - int(time_elapsed)) < 0.1:
-            self.play_sound(self.countdown_sound)
-            print(f"Beep! Countdown: {countdown_value}")
+        # Calculate layout
+        start_y = 150
+        spacing = 100
         
-        if countdown_value <= 3:  # Don't show 4
-            # Calculate scale based on time within this second
-            scale = 1 + 0.5 * (1 - (time_elapsed - int(time_elapsed)))
+        # Draw weapon options
+        for i, weapon in enumerate(weapons):
+            # Create weapon selection box
+            rect = pygame.Rect(WINDOW_WIDTH//4, start_y + i*spacing, WINDOW_WIDTH//2, 80)
             
-            # Render countdown number
-            text = self.countdown_font.render(str(countdown_value), True, WHITE)
-            text_rect = text.get_rect()
-            scaled_surface = pygame.transform.scale(text, 
-                                                 (int(text_rect.width * scale), 
-                                                  int(text_rect.height * scale)))
-            text_rect = scaled_surface.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//2))
-            screen.blit(scaled_surface, text_rect)
-        pygame.display.flip()
+            # Highlight selected weapon
+            if i == self.selected_weapon_index:
+                pygame.draw.rect(screen, (60, 60, 100), rect)  # Highlighted color
+                pygame.draw.rect(screen, WHITE, rect, 2)  # White border
+            else:
+                pygame.draw.rect(screen, (40, 40, 80), rect)  # Normal color
+            
+            # Draw weapon name
+            name = self.font.render(weapon.name, True, WHITE)
+            name_rect = name.get_rect(center=(WINDOW_WIDTH//2, start_y + i*spacing + 20))
+            screen.blit(name, name_rect)
+            
+            # Draw weapon stats
+            stats_color = GOLD if i == self.selected_weapon_index else GRAY
+            fire_rate = 1000 / weapon.fire_rate  # Convert to shots per second
+            stats = self.small_font.render(
+                f"Damage: {weapon.damage} | Fire Rate: {fire_rate:.1f}/s | Speed: {weapon.bullet_speed}",
+                True, stats_color
+            )
+            stats_rect = stats.get_rect(center=(WINDOW_WIDTH//2, start_y + i*spacing + 50))
+            screen.blit(stats, stats_rect)
+        
+        # Draw instructions at bottom
+        instructions = [
+            "↑/↓: Select Weapon",
+            "SPACE: Confirm Selection"
+        ]
+        
+        y_pos = WINDOW_HEIGHT - 80
+        for instruction in instructions:
+            text = self.small_font.render(instruction, True, WHITE)
+            text_rect = text.get_rect(center=(WINDOW_WIDTH//2, y_pos))
+            screen.blit(text, text_rect)
+            y_pos += 30
+
+    def draw(self):
+        if self.in_weapon_select:
+            self.draw_weapon_select_screen()
+        elif self.in_countdown:
+            self.draw_countdown()
+            if pygame.time.get_ticks() - self.countdown_start >= 3000:
+                self.in_countdown = False
+                self.game_started = True
+        elif not self.game_started and not self.in_countdown and not self.in_weapon_select:
+            button_rect = self.draw_start_screen()
+            pygame.display.flip()
+            return button_rect
+        elif self.game_started and not self.game_over:
+            screen.fill(GRASS_GREEN)
+            self.draw_hud()
+            pygame.draw.line(screen, WHITE, (0, HUD_HEIGHT), (WINDOW_WIDTH, HUD_HEIGHT))
+            
+            if self.storm_started:
+                pygame.draw.circle(screen, YELLOW, self.safe_zone_center, int(self.safe_zone_radius), 2)
+            
+            for bullet in self.bullets:
+                bullet.draw()
+            
+            for particle in self.particles:
+                particle.draw(screen)
+            
+            if self.player.alive:
+                self.player.draw()
+            
+            for bot in self.bots:
+                if bot.alive:
+                    bot.draw()
+            
+            self.damage_numbers = [num for num in self.damage_numbers if num.update()]
+            for damage_number in self.damage_numbers:
+                damage_number.draw(screen)
+            
+            pygame.display.flip()
+            return None  
+        elif self.game_over:
+            self.draw_game_over_screen()
+            pygame.display.flip()
+            return None  
+
+    def draw_game_objects(self):
+        screen.fill(GRASS_GREEN)
+        
+        for patch in self.terrain_patches:
+            screen_pos = self.camera.apply(patch.x, patch.y)
+            if (0 <= screen_pos[0] <= WINDOW_WIDTH and 
+                HUD_HEIGHT <= screen_pos[1] <= WINDOW_HEIGHT):
+                scaled_size = self.camera.apply_radius(patch.size)
+                
+                if patch.type == 'tree':
+                    # Draw tree trunk
+                    trunk_width = scaled_size // 3
+                    trunk_height = scaled_size // 2
+                    pygame.draw.rect(screen, BROWN, 
+                                  (screen_pos[0] - trunk_width//2,
+                                   screen_pos[1] - trunk_height//2,
+                                   trunk_width, trunk_height))
+                    # Draw tree top
+                    pygame.draw.circle(screen, patch.color,
+                                    (int(screen_pos[0]), int(screen_pos[1] - trunk_height//2)),
+                                    int(scaled_size//2))
+                else:
+                    pygame.draw.circle(screen, patch.color,
+                                    (int(screen_pos[0]), int(screen_pos[1])),
+                                    int(scaled_size))
+        
+        if self.storm_started:
+            screen_pos = self.camera.apply(self.safe_zone_center[0], self.safe_zone_center[1])
+            scaled_radius = self.camera.apply_radius(self.safe_zone_radius)
+            pygame.draw.circle(screen, YELLOW, (int(screen_pos[0]), int(screen_pos[1])), 
+                            int(scaled_radius), 2)
+        else:
+            time_until_storm = max(0, 20 - (pygame.time.get_ticks() - self.storm_start_time) / 1000)
+            if time_until_storm > 0:
+                timer_text = self.font.render(f"Storm begins in: {int(time_until_storm)}s", True, YELLOW)
+                text_rect = timer_text.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT - 30))
+                screen.blit(timer_text, text_rect)
+        
+        for bullet in self.bullets:
+            screen_pos = self.camera.apply(bullet.x, bullet.y)
+            scaled_size = self.camera.apply_radius(bullet.size)
+            pygame.draw.circle(screen, WHITE, (int(screen_pos[0]), int(screen_pos[1])), 
+                            int(scaled_size))
+        
+        if self.player.alive:
+            screen_pos = self.camera.apply(self.player.x, self.player.y)
+            scaled_size = self.camera.apply_radius(PLAYER_SIZE)
+            body_width = scaled_size - 4
+            body_height = scaled_size + 4
+            pygame.draw.rect(screen, self.player.color, 
+                        (screen_pos[0] - body_width//2, 
+                         screen_pos[1] - body_height//2, 
+                         body_width, body_height))
+            head_radius = scaled_size//3
+            pygame.draw.circle(screen, self.player.color,
+                          (int(screen_pos[0]), int(screen_pos[1] - body_height//2 - head_radius)),
+                          head_radius)
+        
+        for bot in self.bots:
+            if bot.alive:
+                screen_pos = self.camera.apply(bot.x, bot.y)
+                scaled_size = self.camera.apply_radius(BOT_SIZE)
+                body_width = scaled_size - 4
+                body_height = scaled_size + 4
+                pygame.draw.rect(screen, bot.color, 
+                            (screen_pos[0] - body_width//2,
+                             screen_pos[1] - body_height//2,
+                             body_width, body_height))
+                head_radius = scaled_size//3
+                pygame.draw.circle(screen, bot.color,
+                              (int(screen_pos[0]), int(screen_pos[1] - body_height//2 - head_radius)),
+                              head_radius)
+
+    def shoot(self, shooter, target_x, target_y, current_time):
+        if not shooter.alive or not shooter.weapon_inventory.current_weapon:
+            return []
+
+        weapon = shooter.weapon_inventory.current_weapon
+        if current_time - shooter.last_shot_time < weapon.fire_rate:
+            return []
+
+        shooter.last_shot_time = current_time
+        bullets = []
+
+        dx = target_x - shooter.x
+        dy = target_y - shooter.y
+        length = math.sqrt(dx*dx + dy*dy)
+        if length > 0:
+            dx = dx/length
+            dy = dy/length
+
+        if weapon.name == "Shotgun":
+            num_pellets = 5
+            spread_angle = math.pi / 8  
+            for i in range(num_pellets):
+                angle = math.atan2(dy, dx) + random.uniform(-spread_angle, spread_angle)
+                pellet_dx = math.cos(angle)
+                pellet_dy = math.sin(angle)
+                bullets.append(Bullet(
+                    shooter.x, shooter.y,
+                    pellet_dx, pellet_dy,
+                    weapon.damage // num_pellets,  
+                    weapon.bullet_speed,
+                    weapon.bullet_size,
+                    shooter,
+                    isinstance(shooter, Bot)
+                ))
+        else:
+            bullets.append(Bullet(
+                shooter.x, shooter.y,
+                dx, dy,
+                weapon.damage,
+                weapon.bullet_speed,
+                weapon.bullet_size,
+                shooter,
+                isinstance(shooter, Bot)
+            ))
+
+        return bullets
 
     def run(self):
         clock = pygame.time.Clock()
         running = True
-        print("Game starting...")
-
+        
         while running:
-            # Get current button state and draw current frame
-            button_rect = self.draw()
-            pygame.display.flip()  # Make sure we update the display
-            
-            # Debug output for game state
-            if self.game_started:
-                if not hasattr(self, '_last_game_state') or self._last_game_state != 'game':
-                    print("\nGame State: Playing Game")
-                    print(f"Player alive: {self.player.alive}")
-                    print(f"Bots alive: {sum(1 for bot in self.bots if bot.alive)}")
-                    self._last_game_state = 'game'
-            elif self.in_countdown:
-                if not hasattr(self, '_last_game_state') or self._last_game_state != 'countdown':
-                    print("\nGame State: Countdown")
-                    self._last_game_state = 'countdown'
-            else:
-                if not hasattr(self, '_last_game_state') or self._last_game_state != 'start':
-                    print("\nGame State: Start Screen")
-                    self._last_game_state = 'start'
+            current_time = pygame.time.get_ticks()
             
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.MOUSEBUTTONDOWN:
-                    mouse_pos = pygame.mouse.get_pos()
-                    print(f"\nMouse Click at {mouse_pos}")
-                    print(f"Button rect: {button_rect}")
-                    
-                    if button_rect:
-                        # Check if click is within button bounds
-                        in_button = (button_rect[0] <= mouse_pos[0] <= button_rect[0] + button_rect[2] and 
-                                   button_rect[1] <= mouse_pos[1] <= button_rect[1] + button_rect[3])
-                        print(f"Click in button bounds: {in_button}")
-                        
-                        if in_button:  # Only trigger if click is within button
-                            if not self.game_started and not self.in_countdown:
-                                print("Starting countdown!")
-                                self.in_countdown = True
-                                self.countdown_start = pygame.time.get_ticks()
-                            elif self.game_over:
-                                print("Resetting game!")
-                                self.reset_game()
-                                self.in_countdown = True
-                                self.countdown_start = pygame.time.get_ticks()
-                elif event.type == pygame.KEYDOWN and event.key == pygame.K_RETURN:
-                    print("Enter key pressed!")
-                    if not self.game_started and not self.in_countdown:
-                        print("Starting countdown!")
-                        self.in_countdown = True
-                        self.countdown_start = pygame.time.get_ticks()
-                    elif self.game_over:
-                        print("Resetting game!")
+                    if self.game_over:
+                        # Reset everything when clicking after game over
+                        self.game_over = False
+                        self.game_started = False
+                        self.in_countdown = False
+                        self.in_weapon_select = False
                         self.reset_game()
-                        self.in_countdown = True
-                        self.countdown_start = pygame.time.get_ticks()
-                elif event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
-                    if self.game_started and not self.game_over:
-                        current_time = pygame.time.get_ticks()
-                        if self.weapon_inventory.current_weapon.can_shoot(current_time):
-                            dx = 0
-                            dy = 0
-                            keys = pygame.key.get_pressed()
-                            if keys[pygame.K_UP]:
-                                dy -= 1
-                            if keys[pygame.K_DOWN]:
-                                dy += 1
-                            if keys[pygame.K_LEFT]:
-                                dx -= 1
-                            if keys[pygame.K_RIGHT]:
-                                dx += 1
-                            length = math.sqrt(dx * dx + dy * dy)
-                            if length > 0:
-                                target_x = self.player.x + (dx / length) * 100
-                                target_y = self.player.y + (dy / length) * 100
-                            else:
-                                target_x = self.player.x + 100
-                                target_y = self.player.y
-                            bullet = Bullet(self.player.x, self.player.y, target_x, target_y, False, 
-                                            self.weapon_inventory.current_weapon.bullet_color, 
-                                            self.weapon_inventory.current_weapon.bullet_speed, 
-                                            self.weapon_inventory.current_weapon.bullet_size, 
-                                            self.weapon_inventory.current_weapon.damage)
-                            self.bullets.append(bullet)
-                            self.weapon_inventory.current_weapon.shoot(current_time)
-                            self.play_sound(self.shoot_sound)
-                elif event.type == pygame.KEYDOWN and event.key == pygame.K_w:
-                    self.weapon_inventory.prev_weapon()
-                elif event.type == pygame.KEYDOWN and event.key == pygame.K_e:
-                    self.weapon_inventory.next_weapon()
+                    elif not self.game_started and not self.in_countdown and not self.in_weapon_select:
+                        print("Start button clicked")
+                        mouse_pos = pygame.mouse.get_pos()
+                        button_rect = pygame.Rect(WINDOW_WIDTH//2 - 100, WINDOW_HEIGHT//2 - 25, 200, 50)
+                        if button_rect.collidepoint(mouse_pos):
+                            print("Start button clicked in the rectangle. Entering weapon select.")
+                            self.reset_game()
+                            self.in_weapon_select = True
+                elif event.type == pygame.KEYDOWN:
+                    if self.in_weapon_select:
+                        weapons = list(self.player.weapon_inventory.weapons.values())
+                        if event.key == pygame.K_UP:
+                            self.selected_weapon_index = (self.selected_weapon_index - 1) % len(weapons)
+                        elif event.key == pygame.K_DOWN:
+                            self.selected_weapon_index = (self.selected_weapon_index + 1) % len(weapons)
+                        elif event.key == pygame.K_SPACE:
+                            # Select weapon and start countdown
+                            weapon_name = list(self.player.weapon_inventory.weapons.keys())[self.selected_weapon_index]
+                            self.player.weapon_inventory.switch_weapon(weapon_name)
+                            self.in_weapon_select = False
+                            self.in_countdown = True
+                            self.countdown_start = current_time
+                    elif self.game_started and not self.game_over:
+                        if event.key == pygame.K_SPACE:
+                            # Shooting logic here...
+                            if self.game_started and self.player.alive:
+                                # Get the last movement direction
+                                dx = 0
+                                dy = 0
+                                keys = pygame.key.get_pressed()
+                                if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+                                    dx = -1
+                                if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+                                    dx = 1
+                                if keys[pygame.K_w] or keys[pygame.K_UP]:
+                                    dy = -1
+                                if keys[pygame.K_s] or keys[pygame.K_DOWN]:
+                                    dy = 1
+                                
+                                # If not moving, shoot in the last direction we were facing
+                                if dx == 0 and dy == 0:
+                                    if hasattr(self.player, 'facing_dx'):
+                                        dx = self.player.facing_dx
+                                        dy = self.player.facing_dy
+                                    else:
+                                        dx = 1  # Default to facing right
+                                        dy = 0
+                                
+                                # Normalize the direction
+                                length = math.sqrt(dx*dx + dy*dy)
+                                if length > 0:
+                                    dx = dx/length
+                                    dy = dy/length
+                                    
+                                    # Store facing direction
+                                    self.player.facing_dx = dx
+                                    self.player.facing_dy = dy
+                                    
+                                    # Calculate target point in facing direction
+                                    target_x = self.player.x + dx * 100
+                                    target_y = self.player.y + dy * 100
+                                    
+                                    bullets = self.shoot(self.player, target_x, target_y, current_time)
+                                    if bullets:
+                                        self.bullets.extend(bullets)
+                        elif event.key == pygame.K_w:
+                            self.player.weapon_inventory.prev_weapon()
+                        elif event.key == pygame.K_e:
+                            self.player.weapon_inventory.next_weapon()
 
-            # Update game state if needed
-            if self.in_countdown:
-                current_time = pygame.time.get_ticks()
-                time_elapsed = (current_time - self.countdown_start) / 1000
-                if time_elapsed >= 3:  # 3 second countdown
-                    print("\nCountdown finished!")
-                    print("Starting game...")
-                    self.in_countdown = False
-                    self.game_started = True
-            
-            # Update game logic when game is running
-            if self.game_started and not self.game_over and not self.in_countdown:
-                if self.player.alive:
-                    # Handle player movement and shooting
-                    keys = pygame.key.get_pressed()
-                    dx = (keys[pygame.K_RIGHT] - keys[pygame.K_LEFT]) * PLAYER_SPEED
-                    dy = (keys[pygame.K_DOWN] - keys[pygame.K_UP]) * PLAYER_SPEED
+            if self.game_started and not self.game_over:
+                # Handle movement
+                keys = pygame.key.get_pressed()
+                dx = 0
+                dy = 0
+                if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+                    dx = -PLAYER_SPEED
+                if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+                    dx = PLAYER_SPEED
+                if keys[pygame.K_w] or keys[pygame.K_UP]:
+                    dy = -PLAYER_SPEED
+                if keys[pygame.K_s] or keys[pygame.K_DOWN]:
+                    dy = PLAYER_SPEED
+                
+                # Store facing direction when moving
+                if dx != 0 or dy != 0:
+                    length = math.sqrt(dx*dx + dy*dy)
+                    self.player.facing_dx = dx/length
+                    self.player.facing_dy = dy/length
+                
+                # Normalize diagonal movement
+                if dx != 0 and dy != 0:
+                    dx *= 0.707  # 1/sqrt(2)
+                    dy *= 0.707
+                
+                # Update player position
+                if dx != 0 or dy != 0:
+                    new_x = self.player.x + dx
+                    new_y = self.player.y + dy
                     
-                    # Move player
-                    self.player.move(dx, dy)
-                    
+                    # Keep player within bounds
+                    self.player.x = max(0, min(new_x, MAP_WIDTH))
+                    self.player.y = max(HUD_HEIGHT, min(new_y, MAP_HEIGHT))
+                
+                # Update camera to follow player
+                self.camera.update(self.player.x, self.player.y)
+                
                 # Update game state
-                self.move_bots()
                 self.update_bullets()
                 self.update_safe_zone()
                 self.check_zone_damage()
-
-                # Check win/lose condition
-                alive_bots = [bot for bot in self.bots if bot.alive]
-                if not alive_bots and self.player.alive:
+                self.update_particles()
+                self.move_bots()
+                
+                # Draw everything
+                screen.fill(GRASS_GREEN)
+                self.draw_game_objects()
+                self.draw_hud()
+                
+                # Draw storm timer if storm hasn't started
+                if not self.storm_started:
+                    time_until_storm = max(0, 20 - (current_time - self.storm_start_time) / 1000)
+                    if time_until_storm > 0:
+                        timer_text = self.font.render(f"Storm begins in: {int(time_until_storm)}s", True, YELLOW)
+                        text_rect = timer_text.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT - 30))
+                        screen.blit(timer_text, text_rect)
+                
+                # Draw damage numbers
+                self.damage_numbers = [num for num in self.damage_numbers if num.update()]
+                for damage_number in self.damage_numbers:
+                    damage_number.draw(screen)
+                
+                # Check win/lose conditions
+                alive_bots = len([bot for bot in self.bots if bot.alive])
+                if alive_bots == 0 and self.player.alive:
                     self.game_over = True
                     self.victory = True
-                    self.play_sound(self.victory_music)
-                    print("Victory!")
                 elif not self.player.alive:
                     self.game_over = True
                     self.victory = False
-                    self.play_sound(self.game_over_sound)
-                    print("Game Over!")
-                elif not alive_bots and not self.player.alive:
-                    self.game_over = True
-                    self.victory = False
-                    self.play_sound(self.game_over_sound)
-                    print("Draw!")
+                
+                pygame.display.flip()
+                clock.tick(60)
+            
+            elif self.game_over:
+                self.draw_game_over_screen()
+                pygame.display.flip()
+                clock.tick(60)
 
-            clock.tick(60)
+            if self.in_countdown:
+                self.draw_countdown()
+                if current_time - self.countdown_start >= 3000:
+                    self.in_countdown = False
+                    self.game_started = True
+                pygame.display.flip()
+                clock.tick(60)
+
+            if not self.game_started and not self.in_countdown and not self.in_weapon_select:
+                button_rect = self.draw_start_screen()
+                pygame.display.flip()
+                clock.tick(60)
+
+            if self.in_weapon_select:
+                self.draw_weapon_select_screen()
+                pygame.display.flip()
+                clock.tick(60)
 
         pygame.quit()
 
-    def reset_game(self):
-        self.player = Player(WINDOW_WIDTH//2, WINDOW_HEIGHT//2 + HUD_HEIGHT, BLUE)
-        self.bots = []
-        self.bullets = []
-        self.particles = []
-        self.safe_zone_radius = min(WINDOW_WIDTH, WINDOW_HEIGHT - HUD_HEIGHT) // 2
-        self.safe_zone_center = (WINDOW_WIDTH//2, (WINDOW_HEIGHT + HUD_HEIGHT)//2)
-        self.score = 0
-        self.game_over = False
-        self.victory = False
-        self.victory_start_time = 0
-        self.game_started = False
-        self.in_countdown = False
-        self.weapon_inventory = WeaponInventory()
-        self.create_bots()
-
+screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
 if __name__ == "__main__":
-    pygame.init()
-    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-    pygame.display.set_caption("Battle Royale")
     game = Game()
     game.run()
